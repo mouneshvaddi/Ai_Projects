@@ -5,3 +5,5 @@ feedparser
 requests
 langchain-ollama
 langchain-core
+psycopg[binary]
+python-dotenv

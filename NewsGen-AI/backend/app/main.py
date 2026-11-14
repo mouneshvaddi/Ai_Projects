@@ -1,9 +1,15 @@
 
+from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
+
 from fastapi import FastAPI, Query
 from app.database import get_connection
 import math
 from fastapi.middleware.cors import CORSMiddleware
-
+import os
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -12,6 +18,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.run_database_pipeline import run_pipeline
+
 
 
 logging.basicConfig(level=logging.INFO)
@@ -37,28 +44,35 @@ def scheduled_news_job():
         logger.exception("Scheduled RSS pipeline failed")
 
 
+ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "true").lower() == "true"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 
-    logger.info("Starting NewsGen AI scheduler...")
+    if ENABLE_SCHEDULER:
+        logger.info("Starting NewsGen AI scheduler...")
 
-    scheduler.add_job(
-        scheduled_news_job,
-        trigger=IntervalTrigger(hours=4),
-        id="newsgen_rss_job",
-        name="Automatic RSS News Fetching",
-        max_instances=1,
-        coalesce=True,
-        next_run_time=datetime.now(scheduler.timezone),
-        replace_existing=True,
-    )
+        scheduler.add_job(
+            scheduled_news_job,
+            trigger=IntervalTrigger(hours=10),
+            id="newsgen_rss_job",
+            name="Automatic RSS News Fetching",
+            max_instances=1,
+            coalesce=True,
+            next_run_time=datetime.now(scheduler.timezone),
+            replace_existing=True,
+        )
 
-    scheduler.start()
+        scheduler.start()
+    else:
+        logger.info("NewsGen AI scheduler is disabled.")
 
     yield
 
-    logger.info("Stopping NewsGen AI scheduler...")
-    scheduler.shutdown(wait=False)
+    if scheduler.running:
+        logger.info("Stopping NewsGen AI scheduler...")
+        scheduler.shutdown(wait=False)
 
 app = FastAPI(
     title="NewsGen AI",
