@@ -4,29 +4,29 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
-
-from fastapi import FastAPI, Query
-from app.database import get_connection
-import math
-from fastapi.middleware.cors import CORSMiddleware
 import os
+import math
 import logging
+
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
+from app.database import get_connection
 from app.run_database_pipeline import run_pipeline
 
 
-
 logging.basicConfig(level=logging.INFO)
-
 logger = logging.getLogger("newsgen.scheduler")
 
-scheduler = BackgroundScheduler(
-    timezone="Asia/Kolkata"
+scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
+
+ENABLE_SCHEDULER = (
+    os.getenv("ENABLE_SCHEDULER", "true").lower() == "true"
 )
 
 
@@ -42,9 +42,6 @@ def scheduled_news_job():
 
     except Exception:
         logger.exception("Scheduled RSS pipeline failed")
-
-
-ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "true").lower() == "true"
 
 
 @asynccontextmanager
@@ -65,6 +62,7 @@ async def lifespan(app: FastAPI):
         )
 
         scheduler.start()
+
     else:
         logger.info("NewsGen AI scheduler is disabled.")
 
@@ -74,6 +72,7 @@ async def lifespan(app: FastAPI):
         logger.info("Stopping NewsGen AI scheduler...")
         scheduler.shutdown(wait=False)
 
+
 app = FastAPI(
     title="NewsGen AI",
     description="AI-powered Daily News Summarizer API",
@@ -81,13 +80,18 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "https://ai-projects-phi.vercel.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 @app.get("/")
 def home():
@@ -104,7 +108,6 @@ def health_check():
     }
 
 
-
 @app.get("/api/articles")
 def get_articles(
     page: int = Query(default=1, ge=1),
@@ -115,8 +118,8 @@ def get_articles(
     with get_connection() as connection:
 
         total_articles = connection.execute(
-            "SELECT COUNT(*) FROM articles"
-        ).fetchone()[0]
+            "SELECT COUNT(*) AS count FROM articles"
+        ).fetchone()["count"]
 
         rows = connection.execute(
             """
@@ -135,7 +138,7 @@ def get_articles(
             LEFT JOIN summaries s
                 ON a.id = s.article_id
             ORDER BY a.id DESC
-            LIMIT ? OFFSET ?
+            LIMIT %s OFFSET %s
             """,
             (limit, offset)
         ).fetchall()
@@ -151,11 +154,11 @@ def get_articles(
         }
 
 
-
-
 @app.get("/api/articles/category/{category}")
 def get_articles_by_category(category: str):
+
     with get_connection() as connection:
+
         rows = connection.execute(
             """
             SELECT
@@ -169,8 +172,8 @@ def get_articles_by_category(category: str):
             FROM articles a
             JOIN summaries s
                 ON a.id = s.article_id
-            WHERE LOWER(s.category) = LOWER(?)
-            ORDER BY a.id ASC
+            WHERE LOWER(s.category) = LOWER(%s)
+            ORDER BY a.id DESC
             """,
             (category,)
         ).fetchall()
@@ -184,9 +187,11 @@ def get_articles_by_category(category: str):
 
 @app.get("/api/articles/search")
 def search_articles(keyword: str):
+
     search_term = f"%{keyword}%"
 
     with get_connection() as connection:
+
         rows = connection.execute(
             """
             SELECT
@@ -201,9 +206,9 @@ def search_articles(keyword: str):
             LEFT JOIN summaries s
                 ON a.id = s.article_id
             WHERE
-                a.title LIKE ?
-                OR s.headline LIKE ?
-                OR s.summary_text LIKE ?
+                a.title ILIKE %s
+                OR s.headline ILIKE %s
+                OR s.summary_text ILIKE %s
             ORDER BY a.id DESC
             """,
             (search_term, search_term, search_term)
@@ -217,8 +222,12 @@ def search_articles(keyword: str):
 
 
 @app.get("/api/articles/latest")
-def get_latest_articles(limit: int = Query(default=5, ge=1, le=50)):
+def get_latest_articles(
+    limit: int = Query(default=5, ge=1, le=50)
+):
+
     with get_connection() as connection:
+
         rows = connection.execute(
             """
             SELECT
@@ -232,8 +241,8 @@ def get_latest_articles(limit: int = Query(default=5, ge=1, le=50)):
             FROM articles a
             LEFT JOIN summaries s
                 ON a.id = s.article_id
-            ORDER BY a.published DESC
-            LIMIT ?
+            ORDER BY a.published DESC NULLS LAST
+            LIMIT %s
             """,
             (limit,)
         ).fetchall()
@@ -244,11 +253,11 @@ def get_latest_articles(limit: int = Query(default=5, ge=1, le=50)):
         }
 
 
-
-
 @app.get("/api/categories")
 def get_categories():
+
     with get_connection() as connection:
+
         rows = connection.execute(
             """
             SELECT DISTINCT category
@@ -269,27 +278,39 @@ def get_categories():
 
 @app.get("/api/dashboard/stats")
 def get_dashboard_stats():
+
     with get_connection() as connection:
 
         total_articles = connection.execute(
-            "SELECT COUNT(*) FROM articles"
-        ).fetchone()[0]
+            "SELECT COUNT(*) AS count FROM articles"
+        ).fetchone()["count"]
 
         total_summaries = connection.execute(
-            "SELECT COUNT(*) FROM summaries"
-        ).fetchone()[0]
+            "SELECT COUNT(*) AS count FROM summaries"
+        ).fetchone()["count"]
 
         pending_articles = connection.execute(
-            "SELECT COUNT(*) FROM articles WHERE status = 'pending'"
-        ).fetchone()[0]
+            """
+            SELECT COUNT(*) AS count
+            FROM articles
+            WHERE status = 'pending'
+            """
+        ).fetchone()["count"]
 
         failed_articles = connection.execute(
-            "SELECT COUNT(*) FROM articles WHERE status = 'failed'"
-        ).fetchone()[0]
+            """
+            SELECT COUNT(*) AS count
+            FROM articles
+            WHERE status = 'failed'
+            """
+        ).fetchone()["count"]
 
         total_categories = connection.execute(
-            "SELECT COUNT(DISTINCT category) FROM summaries"
-        ).fetchone()[0]
+            """
+            SELECT COUNT(DISTINCT category) AS count
+            FROM summaries
+            """
+        ).fetchone()["count"]
 
         return {
             "total_articles": total_articles,
@@ -298,6 +319,7 @@ def get_dashboard_stats():
             "failed_articles": failed_articles,
             "total_categories": total_categories
         }
+
 
 @app.post("/api/rss/refresh")
 def manual_rss_refresh():
@@ -311,15 +333,15 @@ def manual_rss_refresh():
         }
 
     except RuntimeError as error:
-        from fastapi import HTTPException
         raise HTTPException(
             status_code=409,
             detail=str(error)
         )
 
     except Exception as error:
-        from fastapi import HTTPException
+        logger.exception("Manual RSS refresh failed")
+
         raise HTTPException(
             status_code=500,
-            detail=str(error)
+            detail="RSS pipeline failed. Check backend logs."
         )
