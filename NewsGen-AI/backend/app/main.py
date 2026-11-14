@@ -17,7 +17,10 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.database import get_connection
-from app.run_database_pipeline import run_pipeline
+from app.run_database_pipeline import (
+    run_pipeline,
+    fetch_and_store_news
+)
 
 
 logging.basicConfig(level=logging.INFO)
@@ -34,7 +37,7 @@ def scheduled_news_job():
     logger.info("Starting scheduled RSS news collection...")
 
     try:
-        result = run_pipeline()
+        result = fetch_and_store_news()
         logger.info("Scheduled pipeline completed: %s", result)
 
     except RuntimeError as error:
