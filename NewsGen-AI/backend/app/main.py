@@ -328,10 +328,10 @@ def get_dashboard_stats():
 def manual_rss_refresh():
 
     try:
-        result = run_pipeline()
+        result = fetch_and_store_news()
 
         return {
-            "message": "RSS pipeline completed successfully",
+            "message": "RSS news fetched and stored successfully",
             "result": result
         }
 
@@ -346,5 +346,5 @@ def manual_rss_refresh():
 
         raise HTTPException(
             status_code=500,
-            detail="RSS pipeline failed. Check backend logs."
+            detail="RSS refresh failed. Check backend logs."
         )
